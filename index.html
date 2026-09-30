@@ -374,8 +374,8 @@ body.noapp .addbar{display:none}
    (Project Settings > API). Assim vale para todos os aparelhos.
    Se deixar em branco, o app pede esses dados na primeira abertura.
    ===================================================================== */
-const SUPABASE_URL = "https://kznzvdlvivcixlbkxuql.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_ZFJ5jgZb_7vfPvIxQArB6w_bYkErxGK";
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
 /* ===================================================================== */
 
 (function(){
@@ -504,12 +504,6 @@ function stats(ym){
   pendingOf(ym).forEach(p=>{if(p.type==="in")s.pin+=p.cents;else{s.pout+=p.cents;if(p.kind==="rec")s.pfix+=p.cents;else s.pvar+=p.cents;}});
   return s;
 }
-function avgVariable(){
-  const cur=thisMonth();
-  const closed=Object.keys(Store.docs).filter(k=>k.startsWith("m-")).map(k=>k.slice(2)).filter(m=>m<cur&&monthDoc(m).items.some(i=>!isIn(i))).sort().slice(-3);
-  if(!closed.length) return {value:0,n:0};
-  return {value:Math.round(closed.reduce((a,m)=>a+stats(m).vari,0)/closed.length),n:closed.length};
-}
 
 /* ---------- Estado ---------- */
 const state={screen:"loading",month:thisMonth(),filter:{cat:null,day:null,type:"all"},authMode:"login",authMsg:null,syncErr:false};
@@ -584,12 +578,11 @@ function chartHTML(){
   if(!withData.length||withData[0]>cur) start=cur; else if(withData[0]>start) start=withData[0];
   const end=shiftMonth(cur,3);
   const months=[];for(let m=start;m<=end;m=shiftMonth(m,1))months.push(m);
-  const avg=avgVariable();
   const data=months.map(m=>{
     const s=stats(m);
     if(m<cur) return {m,inS:s.in,inL:0,fixS:s.fix,fixL:0,varS:s.vari,varL:0};
     if(m===cur) return {m,inS:s.in,inL:s.pin,fixS:s.fix,fixL:s.pfix,varS:s.vari,varL:s.pvar};
-    return {m,inS:0,inL:s.in+s.pin,fixS:0,fixL:s.fix+s.pfix,varS:0,varL:s.vari+s.pvar+avg.value};
+    return {m,inS:0,inL:s.in+s.pin,fixS:0,fixL:s.fix+s.pfix,varS:0,varL:s.vari+s.pvar};
   });
   data.forEach(d=>{d.inT=d.inS+d.inL;d.outT=d.fixS+d.fixL+d.varS+d.varL;d.bal=d.inT-d.outT;});
   if(!data.some(d=>d.inT||d.outT)) return '';
@@ -632,7 +625,7 @@ function chartHTML(){
   pts.forEach(p=>{g+='<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="3" fill="'+(p[2]>cur?'var(--bg)':'var(--ink)')+'" stroke="var(--ink)" stroke-width="1.4" pointer-events="none"/>';});
   let h='<h2>Evolução mês a mês</h2><div class="chart"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Receitas, despesas e saldo por mês">'+g+'</svg></div>'
     +'<div class="legend"><span><i style="background:var(--inc)"></i>Receitas</span><span><i style="background:var(--fix)"></i>Despesas fixas</span><span><i style="background:var(--var)"></i>Despesas variáveis</span><span><i class="ln" style="background:var(--ink)"></i>Saldo</span><span>Tom claro: previsto</span></div>';
-  if(avg.n) h+='<p class="hint" style="margin-top:6px">Meses futuros usam as recorrentes e os previstos cadastrados, mais '+esc(fmt(avg.value))+' de despesas variáveis (média de '+avg.n+(avg.n===1?' mês fechado':' meses fechados')+').</p>';
+  h+='<p class="hint" style="margin-top:6px">Meses futuros consideram só os lançamentos feitos e o que está em A pagar e a receber.</p>';
   return h;
 }
 
@@ -643,7 +636,6 @@ function render(){
   const ym=state.month,cur=thisMonth(),doc=monthDoc(ym),items=doc.items,s=settings();
   const st=stats(ym),pend=pendingOf(ym);
   const isCur=ym===cur,isFuture=ym>cur;
-  const avg=avgVariable();
   const outs=items.filter(i=>!isIn(i));
   const nDays=daysIn(ym);
   const todayDay=isCur?Number(todayISO().slice(8)):null;
@@ -657,9 +649,8 @@ function render(){
 
   // Saldo
   const bal=st.in-st.out;
-  const estVar=isFuture?avg.value:0;
-  const balPrev=st.in+st.pin-(st.out+st.pout+estVar);
-  const hasPrev=st.pin||st.pout||estVar;
+  const balPrev=st.in+st.pin-(st.out+st.pout);
+  const hasPrev=st.pin||st.pout;
   if(isFuture){
     h+='<p class="lbl">Saldo previsto para '+esc(monthName(ym))+'</p>';
     h+='<p class="total'+(balPrev<0?' neg':'')+'"><span class="cur">R$</span>'+(balPrev<0?'−':'')+esc(fmtNum(Math.abs(balPrev)))+'</p>';
@@ -670,9 +661,10 @@ function render(){
   }
   h+='<div class="kpis">';
   if(isFuture){
-    h+='<div class="kpi"><div class="k">Receitas previstas</div><div class="v inc">'+esc(fmt(st.in+st.pin))+'</div></div>';
-    h+='<div class="kpi"><div class="k">Despesas previstas</div><div class="v">'+esc(fmt(st.out+st.pout+estVar))+'</div>'
-      +'<div class="s">Fixas '+esc(fmt(st.fix+st.pfix))+', variáveis '+esc(fmt(st.vari+st.pvar+estVar))+(estVar?' (estimativa)':'')+'</div></div>';
+    const split=(a,la,b,lb)=>a&&b?'<div class="s">'+la+' '+esc(fmt(a))+', '+lb+' '+esc(fmt(b))+'</div>':'';
+    h+='<div class="kpi"><div class="k">Receitas previstas</div><div class="v inc">'+esc(fmt(st.in+st.pin))+'</div>'+split(st.in,'Já recebido',st.pin,'a receber')+'</div>';
+    h+='<div class="kpi"><div class="k">Despesas previstas</div><div class="v">'+esc(fmt(st.out+st.pout))+'</div>'
+      +'<div class="s">Fixas '+esc(fmt(st.fix+st.pfix))+', variáveis '+esc(fmt(st.vari+st.pvar))+'</div>'+split(st.out,'Já pago',st.pout,'a pagar')+'</div>';
   }else{
     h+='<div class="kpi"><div class="k">Receitas</div><div class="v inc">'+esc(fmt(st.in))+'</div>'+(st.pin?'<div class="s">A receber: '+esc(fmt(st.pin))+'</div>':'')+'</div>';
     h+='<div class="kpi"><div class="k">Despesas</div><div class="v">'+esc(fmt(st.out))+'</div>'
