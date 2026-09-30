@@ -1,7 +1,7 @@
 /* Minhas finanças: service worker
    Guarda só os arquivos do app, nunca os dados do Supabase.
    Ao publicar uma versão nova do app, aumente o número abaixo. */
-const VERSION = "v1";
+const VERSION = "v2";
 const CACHE = "financas-" + VERSION;
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable.png", "./apple-touch-icon.png"];
 const CDN = ["https://cdn.jsdelivr.net/", "https://fonts.googleapis.com/", "https://fonts.gstatic.com/"];
