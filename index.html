@@ -213,6 +213,30 @@ body.noapp .addbar{display:none}
 .recrow:hover{background:var(--soft)}
 .recrow small{display:block;color:var(--muted);font-size:12px}
 .tag{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:1px}
+
+/* Layout: celular (ordem) e computador (duas colunas) */
+.cols{display:flex;flex-direction:column}.col{display:contents}
+.sec-sum{order:1}.sec-pend{order:2}.sec-chart{order:3}.sec-cats{order:4}.sec-list{order:5}
+.sec:empty{display:none}
+@media (min-width:1000px){
+  .wrap{max-width:1180px;padding:28px 40px 120px}
+  .cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:0 56px;align-items:start}
+  .col{display:flex;flex-direction:column}
+  .col-b{position:sticky;top:20px;max-height:calc(100vh - 40px);overflow-y:auto;padding-right:6px;scrollbar-width:thin}
+  .col-b > .sec:first-child h2{margin-top:0}
+  .top{max-width:none;margin-bottom:32px}
+  .month{text-align:left;font-size:20px;order:-1;flex:1;padding-left:4px}
+  .top .icon-btn[data-act="prev"]{order:0}.top .icon-btn[data-act="next"]{order:1}.top .icon-btn[data-act="settings"]{order:2;margin-left:8px}
+  .sec-sum{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:24px 26px 18px}
+  .sec-chart,.sec-cats{margin-top:4px}
+  .addbar{left:auto;right:40px;bottom:24px;padding:0;background:none}
+  .addbar .inner{max-width:none}
+  .addbar .btn{width:auto;padding:13px 22px;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+  .item:hover,.pend:hover{background:var(--soft)}
+  .item,.pend{padding-left:8px;padding-right:8px;margin:0 -8px;width:calc(100% + 16px);border-radius:8px}
+  dialog{width:min(560px,calc(100% - 48px))}
+}
+@media (min-width:1000px) and (max-height:700px){.col-b{position:static;max-height:none;overflow:visible}}
 </style>
 </head>
 <body class="noapp">
@@ -655,6 +679,7 @@ function render(){
     +'<button class="icon-btn" data-act="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>'
     +'</header><p class="sync" id="sync"></p>';
 
+  const head=h;h='';const sec={};
   // Saldo
   const bal=st.in-st.out;
   const balPrev=st.in+st.pin-(st.out+st.pout);
@@ -715,6 +740,7 @@ function render(){
     h+='</div></div>';
   }
 
+  sec.sum=h;h='';
   // Pendentes
   if(pend.length){
     const tp=pend.filter(p=>p.type==="out").reduce((a,p)=>a+p.cents,0),tr=pend.filter(p=>p.type==="in").reduce((a,p)=>a+p.cents,0);
@@ -732,7 +758,8 @@ function render(){
     });
   }
 
-  h+=chartHTML();
+  sec.pend=h;h='';
+  sec.chart=chartHTML();
 
   // Categorias (despesas)
   if(outs.length){
@@ -747,6 +774,7 @@ function render(){
     h+='</div>';
   }
 
+  sec.cats=h;h='';
   // Lançamentos
   h+='<h2>Lançamentos</h2>';
   const f=state.filter;
@@ -775,6 +803,9 @@ function render(){
       h+='</div>';
     });
   }
+  sec.list=h;
+  const S=k=>'<section class="sec sec-'+k+'">'+sec[k]+'</section>';
+  h=head+'<div class="cols"><div class="col col-a">'+S('sum')+S('chart')+S('cats')+'</div><div class="col col-b">'+S('pend')+S('list')+'</div></div>';
   app.innerHTML=h;setSync();
 }
 
