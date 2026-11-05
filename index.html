@@ -237,6 +237,23 @@ body.noapp .addbar{display:none}
   dialog{width:min(560px,calc(100% - 48px))}
 }
 @media (min-width:1000px) and (max-height:700px){.col-b{position:static;max-height:none;overflow:visible}}
+
+.hero{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}
+.hero.one{grid-template-columns:1fr}
+.hero .total{font-size:clamp(26px,7.4vw,44px)}
+.hero .sub{font-size:13px;margin-top:6px}
+.hero-now{padding:14px 0}
+@media (max-width:360px){.hero{grid-template-columns:1fr}}
+.hero-prev{background:color-mix(in srgb,var(--accent) 13%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:14px;padding:14px 16px}
+.hero-prev .lbl{color:var(--accent);font-weight:600}
+.hero .lbl{font-size:14px;white-space:nowrap}
+.hero-now,.hero-prev{display:flex;flex-direction:column;justify-content:center}
+.hero-prev .total:not(.neg){color:var(--ink)}
+.hero.one .total{font-size:clamp(40px,11vw,56px)}
+.rows{margin:8px 0 0;display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--muted)}
+.rows div{display:flex;justify-content:space-between;gap:12px}
+.rows dt,.rows dd{margin:0}
+.rows dd{color:var(--ink);font-weight:500;white-space:nowrap}
 </style>
 </head>
 <body class="noapp">
@@ -530,9 +547,11 @@ function pendingOf(ym){
   d.planned.forEach(p=>out.push(Object.assign({kind:"plan"},p)));
   return out.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
 }
-function stats(ym){
+function stats(ym,upto){
   const d=monthDoc(ym);const s={in:0,out:0,fix:0,vari:0,pin:0,pout:0,pfix:0,pvar:0};
-  d.items.forEach(i=>{if(isIn(i))s.in+=i.cents;else{s.out+=i.cents;if(isFixed(i))s.fix+=i.cents;else s.vari+=i.cents;}});
+  d.items.forEach(i=>{
+    if(upto&&i.date>upto){if(isIn(i))s.pin+=i.cents;else{s.pout+=i.cents;if(isFixed(i))s.pfix+=i.cents;else s.pvar+=i.cents;}return;}
+    if(isIn(i))s.in+=i.cents;else{s.out+=i.cents;if(isFixed(i))s.fix+=i.cents;else s.vari+=i.cents;}});
   pendingOf(ym).forEach(p=>{if(p.type==="in")s.pin+=p.cents;else{s.pout+=p.cents;if(p.kind==="rec")s.pfix+=p.cents;else s.pvar+=p.cents;}});
   return s;
 }
@@ -657,7 +676,6 @@ function chartHTML(){
   pts.forEach(p=>{g+='<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="3" fill="'+(p[2]>cur?'var(--bg)':'var(--ink)')+'" stroke="var(--ink)" stroke-width="1.4" pointer-events="none"/>';});
   let h='<h2>Evolução mês a mês</h2><div class="chart"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Receitas, despesas e saldo por mês">'+g+'</svg></div>'
     +'<div class="legend"><span><i style="background:var(--inc)"></i>Receitas</span><span><i style="background:var(--fix)"></i>Despesas fixas</span><span><i style="background:var(--var)"></i>Despesas variáveis</span><span><i class="ln" style="background:var(--ink)"></i>Saldo</span><span>Tom claro: previsto</span></div>';
-  h+='<p class="hint" style="margin-top:6px">Meses futuros consideram só os lançamentos feitos e o que está em A pagar e a receber.</p>';
   return h;
 }
 
@@ -666,7 +684,7 @@ function render(){
   document.body.classList.toggle("noapp",state.screen!=="app");
   if(state.screen!=="app") return;
   const ym=state.month,cur=thisMonth(),doc=monthDoc(ym),items=doc.items,s=settings();
-  const st=stats(ym),pend=pendingOf(ym);
+  const st=stats(ym,ym===cur?todayISO():null),pend=pendingOf(ym);
   const isCur=ym===cur,isFuture=ym>cur;
   const outs=items.filter(i=>!isIn(i));
   const nDays=daysIn(ym);
@@ -683,25 +701,26 @@ function render(){
   // Saldo
   const bal=st.in-st.out;
   const balPrev=st.in+st.pin-(st.out+st.pout);
-  const hasPrev=st.pin||st.pout;
-  if(isFuture){
-    h+='<p class="lbl">Saldo previsto para '+esc(monthName(ym))+'</p>';
-    h+='<p class="total'+(balPrev<0?' neg':'')+'"><span class="cur">R$</span>'+(balPrev<0?'−':'')+esc(fmtNum(Math.abs(balPrev)))+'</p>';
+  const money=(v,cls)=>'<p class="total'+(v<0?' neg':'')+(cls?' '+cls:'')+'"><span class="cur">R$</span>'+(v<0?'−':'')+esc(fmtNum(Math.abs(v)))+'</p>';
+    if(isFuture){
+    h+='<div class="hero one"><div class="hero-prev"><p class="lbl">Saldo previsto</p>'+money(balPrev)+'</div></div>';
+  }else if(isCur){
+    const td=todayISO();
+    h+='<div class="hero"><div class="hero-now"><p class="lbl">Saldo hoje, '+esc(ddmm(td))+'</p>'+money(bal)+'</div>'
+      +'<div class="hero-prev"><p class="lbl">Saldo previsto</p>'+money(balPrev)+'</div></div>';
   }else{
-    h+='<p class="lbl">Saldo de '+esc(monthName(ym))+'</p>';
-    h+='<p class="total'+(bal<0?' neg':'')+'"><span class="cur">R$</span>'+(bal<0?'−':'')+esc(fmtNum(Math.abs(bal)))+'</p>';
-    if(hasPrev) h+='<p class="sub">Previsto para o fim do mês: '+esc(fmt(balPrev))+'</p>';
+    h+='<div class="hero one"><div class="hero-now"><p class="lbl">Saldo final de '+esc(monthName(ym))+'</p>'+money(bal)+'</div></div>';
   }
   h+='<div class="kpis">';
+  const rows=r=>{r=r.filter(x=>x);return r.length?'<dl class="rows">'+r.map(x=>'<div><dt>'+x[0]+'</dt><dd>'+esc(fmt(x[1]))+'</dd></div>').join('')+'</dl>':'';};
   if(isFuture){
-    const split=(a,la,b,lb)=>a&&b?'<div class="s">'+la+' '+esc(fmt(a))+', '+lb+' '+esc(fmt(b))+'</div>':'';
-    h+='<div class="kpi"><div class="k">Receitas previstas</div><div class="v inc">'+esc(fmt(st.in+st.pin))+'</div>'+split(st.in,'Já recebido',st.pin,'a receber')+'</div>';
+    h+='<div class="kpi"><div class="k">Receitas previstas</div><div class="v inc">'+esc(fmt(st.in+st.pin))+'</div>'+rows([st.in&&st.pin?['Já recebido',st.in]:null,st.in&&st.pin?['A receber',st.pin]:null])+'</div>';
     h+='<div class="kpi"><div class="k">Despesas previstas</div><div class="v">'+esc(fmt(st.out+st.pout))+'</div>'
-      +'<div class="s">Fixas '+esc(fmt(st.fix+st.pfix))+', variáveis '+esc(fmt(st.vari+st.pvar))+'</div>'+split(st.out,'Já pago',st.pout,'a pagar')+'</div>';
+      +rows([['Fixas',st.fix+st.pfix],['Variáveis',st.vari+st.pvar],st.out&&st.pout?['Já pago',st.out]:null,st.out&&st.pout?['A pagar',st.pout]:null])+'</div>';
   }else{
-    h+='<div class="kpi"><div class="k">Receitas</div><div class="v inc">'+esc(fmt(st.in))+'</div>'+(st.pin?'<div class="s">A receber: '+esc(fmt(st.pin))+'</div>':'')+'</div>';
-    h+='<div class="kpi"><div class="k">Despesas</div><div class="v">'+esc(fmt(st.out))+'</div>'
-      +'<div class="s">Fixas '+esc(fmt(st.fix))+', variáveis '+esc(fmt(st.vari))+'</div>'+(st.pout?'<div class="s">A pagar: '+esc(fmt(st.pout))+'</div>':'')+'</div>';
+    h+='<div class="kpi"><div class="k">'+(isCur?'Receitas até hoje':'Receitas')+'</div><div class="v inc">'+esc(fmt(st.in))+'</div>'+rows([st.pin?['A receber',st.pin]:null])+'</div>';
+    h+='<div class="kpi"><div class="k">'+(isCur?'Despesas até hoje':'Despesas')+'</div><div class="v">'+esc(fmt(st.out))+'</div>'
+      +rows([['Fixas',st.fix],['Variáveis',st.vari],st.pout?['A pagar',st.pout]:null])+'</div>';
   }
   h+='</div>';
 
@@ -744,7 +763,7 @@ function render(){
   // Pendentes
   if(pend.length){
     const tp=pend.filter(p=>p.type==="out").reduce((a,p)=>a+p.cents,0),tr=pend.filter(p=>p.type==="in").reduce((a,p)=>a+p.cents,0);
-    h+='<h2>A pagar e a receber</h2><p class="sub" style="margin:-4px 0 4px">'+[tp?'A pagar '+fmt(tp):'',tr?'A receber '+fmt(tr):''].filter(Boolean).map(esc).join(', ')+'</p>';
+    h+='<h2>A pagar e a receber</h2>';
     const today=todayISO();
     pend.forEach(p=>{
       const c=catById(p.cat,p.type),late=p.date<today;
