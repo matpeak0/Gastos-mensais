@@ -397,7 +397,7 @@ body.noapp .addbar{display:none}
         <button type="button" class="btn btn-ghost" id="sBkImp" style="padding:8px 14px;font-size:14px">Importar backup</button>
         <input type="file" id="sBkFile" accept=".json,application/json" hidden>
       </div>
-      <p class="hint">Importações somam aos dados existentes. Itens repetidos são ignorados.</p>
+      <p class="hint">Aceita o CSV deste app e extratos bancários em CSV (data, descrição e valor). As categorias são sugeridas automaticamente. Importações somam aos dados existentes e itens repetidos são ignorados.</p>
     </div>
     <hr class="divider">
     <div id="sInstallRow" style="display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted)" hidden>
@@ -1092,21 +1092,64 @@ $("sFile").addEventListener("change",async e=>{
   const file=e.target.files[0];e.target.value="";if(!file) return;
   let rows;try{rows=parseCSV(await file.text());}catch(err){toast("Não foi possível ler o arquivo.");return;}
   if(!rows.length){toast("O arquivo está vazio.");return;}
+  // Colunas: aceita o CSV do próprio app, extratos com cabeçalho (Data, Descrição/Lançamento/Histórico, Valor)
+  // e extratos sem cabeçalho (data; descrição; valor), detectando as colunas pelo conteúdo.
   const head=rows[0].map(norm);
-  let ix={data:0,tipo:-1,desc:1,cat:2,fixa:-1,pay:3,val:4},start=0;
-  if(head.includes("data")){start=1;const g=n=>head.indexOf(n);ix={data:g("data"),tipo:g("tipo"),desc:g("descricao"),cat:g("categoria"),fixa:g("fixa"),pay:g("pagamento"),val:g("valor")};}
+  const find=(...names)=>head.findIndex(h=>names.some(n=>h===n||h.startsWith(n+" ")||h.startsWith(n)));
+  let ix,start=0,bank=false;
+  if(head.some(h=>h==="data"||h.startsWith("data "))){
+    start=1;
+    ix={data:find("data"),tipo:find("tipo"),desc:find("descricao","lancamento","historico","identificacao","memo"),cat:find("categoria"),fixa:find("fixa"),pay:find("pagamento"),val:find("valor","quantia","montante")};
+    bank=ix.cat<0;
+  }else{
+    const isVal=c=>/^\s*-?\s*(R\$\s*)?-?\d{1,3}(\.\d{3})*(,\d{1,2})?\s*$|^\s*-?\d+(\.\d{1,2})?\s*$/.test(c||"");
+    const sample=rows.find(r=>r.some(c=>toISO(c))&&r.some(isVal))||rows[0];
+    const di=sample.findIndex(c=>toISO(c));
+    let vi=-1;for(let k=sample.length-1;k>=0;k--){if(k!==di&&isVal(sample[k])){vi=k;break;}}
+    const dsi=sample.findIndex((c,k)=>k!==di&&k!==vi&&String(c).trim());
+    ix={data:di,tipo:-1,desc:dsi,cat:-1,fixa:-1,pay:-1,val:vi};bank=true;
+  }
+  if(ix.data<0||ix.val<0){toast("Não encontrei as colunas de data e valor. Cada linha precisa ter a data, a descrição e o valor.");return;}
   const s=settings(),cats={out:clone(s.categories),in:clone(s.incomeCategories)};let changed=false;
+  // Categorização automática para extratos: primeiro pelo histórico, depois por palavras-chave
+  const clean=d=>String(d||"").replace(/\s*\d{2}\/\d{2}(\/\d{2,4})?\s*$/,"").replace(/\s+/g," ").trim();
+  const hist={};allItems().forEach(i=>{const k=(i.type||"out")+"|"+norm(clean(i.desc));if(k.length>4)hist[k]=i.cat;});
+  const RULES={out:[
+    [/posto|combust|ipiranga|shell|uber|\b99\b|onibus|metro|estacion|pedagio|sem parar/,"transporte"],
+    [/enxut|mercad|supermerc|atacad|assai|carrefour|oxxo|hortifr|padaria|panific|acougue|sacolao/,"mercado"],
+    [/lanch|restaur|ifood|burger|pizza|cafe|\bbar\b|mc ?donald|food|sorvet|pastel/,"alimentacao"],
+    [/farma|drog|raia|pague menos|hospital|clinica|laborat/,"saude"],
+    [/netflix|spotify|hbo|disney|prime video|youtube|globoplay|deezer/,"assinaturas"],
+    [/aluguel|quintoandar|condominio/,"moradia"],
+    [/cpfl|enel|light|sabesp|comgas|claro|vivo|tim\b|internet|energia/,"contas"],
+    [/cinema|cinemark|ingresso|show|teatro/,"lazer"],
+    [/^pix/,"pix"]],
+   in:[[/salario|folha|pagto sal/,"salario"],[/reembolso|estorno/,"reembolsos"],[/^pix|transf/,"pix_recebido"]]};
+  const has=(t,id)=>cats[t].some(c=>c.id===id);
+  const guess=(t,desc)=>{
+    const h=hist[t+"|"+norm(desc)];if(h&&has(t,h))return h;
+    const n=norm(desc);for(const [re,id] of RULES[t]) if(re.test(n)&&has(t,id)) return id;
+    const fb=t==="in"?"outras_receitas":"outros";return has(t,fb)?fb:cats[t][cats[t].length-1].id;
+  };
+  const payOf=d=>{const n=norm(d);return /^pix/.test(n)?"Pix":/boleto/.test(n)?"Boleto":/^(pay|compra|deb|tar)/.test(n)?"Débito":/^ted|^doc|transf/.test(n)?"Transferência":"";};
   const byMonth={};let bad=0;
   for(let r=start;r<rows.length;r++){const row=rows[r];
     const date=toISO(row[ix.data]);let cents=parseCents(row[ix.val]);
     if(!date||!cents){bad++;continue;}
-    let type=ix.tipo>=0&&/^rec/i.test(norm(row[ix.tipo]))?"in":"out";
+    let type=ix.tipo>=0?(/^rec/i.test(norm(row[ix.tipo]))?"in":"out"):(cents<0?"out":"in");
     if(cents<0){cents=-cents;}
-    const cname=(ix.cat>=0?row[ix.cat]:"").trim()||(type==="in"?"Outras receitas":"Outros");
-    let c=cats[type].find(x=>norm(x.name)===norm(cname));
-    if(!c){c={id:"c"+uid(),name:cname.slice(0,30),color:nextColor(cats[type])};cats[type].push(c);changed=true;}
+    const rawDesc=ix.desc>=0?row[ix.desc]||"":"";
+    let catId;
+    if(bank){catId=guess(type,clean(rawDesc));}
+    else{
+      const cname=(ix.cat>=0?row[ix.cat]:"").trim()||(type==="in"?"Outras receitas":"Outros");
+      let c=cats[type].find(x=>norm(x.name)===norm(cname));
+      if(!c){c={id:"c"+uid(),name:cname.slice(0,30),color:nextColor(cats[type])};cats[type].push(c);changed=true;}
+      catId=c.id;
+    }
     const payRaw=ix.pay>=0?(row[ix.pay]||"").trim():"";
-    const it={id:uid()+r,type,cents,desc:(ix.desc>=0?row[ix.desc]||"":"").trim().slice(0,80),cat:c.id,date,pay:PAYS.find(p=>norm(p)===norm(payRaw))||payRaw,ts:Date.now()+r};
+    const it={id:uid()+r,type,cents,desc:(bank?clean(rawDesc):rawDesc.trim()).slice(0,80),cat:catId,date,
+      pay:bank?payOf(rawDesc):(PAYS.find(p=>norm(p)===norm(payRaw))||payRaw),ts:Date.now()+r};
     if(type==="out"&&ix.fixa>=0&&/^s/i.test(norm(row[ix.fixa]))) it.fixed=true;
     (byMonth[date.slice(0,7)]=byMonth[date.slice(0,7)]||[]).push(it);
   }
