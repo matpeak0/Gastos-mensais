@@ -364,6 +364,18 @@ body.noapp .addbar{display:none}
     <label class="f">Orçamento mensal de despesas
       <input class="inp" id="sBudget" inputmode="decimal" placeholder="Deixe em branco para não usar">
     </label>
+    <div class="f" style="display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--muted)">
+      <span>Saldo inicial da conta</span>
+      <div class="row2">
+        <label class="f">No início de
+          <input class="inp" id="sOpenMonth" type="month">
+        </label>
+        <label class="f">Valor (R$)
+          <input class="inp" id="sOpenVal" inputmode="decimal" placeholder="Em branco: não usar">
+        </label>
+      </div>
+      <p class="hint">Quanto havia na conta no primeiro dia desse mês. Os meses seguintes partem desse valor.</p>
+    </div>
     <hr class="divider">
     <div class="f" style="display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--muted)">
       <span>Contas fixas e receitas recorrentes</span>
@@ -527,7 +539,14 @@ function monthDoc(ym){return normMonth(Store.docs[mKey(ym)]);}
 function mutateMonth(ym,fn){return Store.mutate(mKey(ym),d=>fn(normMonth(d)));}
 const okList=l=>Array.isArray(l)&&l.length;
 function settings(){const s=Store.docs.settings||{};
-  return {budget:Number(s.budget)||0,categories:okList(s.categories)?s.categories:clone(DEF_OUT),incomeCategories:okList(s.incomeCategories)?s.incomeCategories:clone(DEF_IN)};}
+  const o=s.opening;
+  return {budget:Number(s.budget)||0,opening:(o&&typeof o.cents==="number"&&/^\d{4}-\d{2}$/.test(o.month||""))?{cents:o.cents,month:o.month}:null,categories:okList(s.categories)?s.categories:clone(DEF_OUT),incomeCategories:okList(s.incomeCategories)?s.incomeCategories:clone(DEF_IN)};}
+function startBalance(ym){
+  const o=settings().opening;if(!o||ym<o.month) return null;
+  const cur=thisMonth();let b=o.cents;
+  for(let m=o.month;m<ym;m=shiftMonth(m,1)){const t=stats(m);b+=t.in-t.out+(m<cur?0:t.pin-t.pout);}
+  return b;
+}
 function recurring(){const r=Store.docs.recurring;return r&&Array.isArray(r.items)?r.items:[];}
 function mutateRecurring(fn){return Store.mutate("recurring",d=>({items:fn(d&&Array.isArray(d.items)?d.items.slice():[])}));}
 function catsOf(type){const s=settings();return type==="in"?s.incomeCategories:s.categories;}
@@ -699,8 +718,9 @@ function render(){
 
   const head=h;h='';const sec={};
   // Saldo
-  const bal=st.in-st.out;
-  const balPrev=st.in+st.pin-(st.out+st.pout);
+  const base=startBalance(ym)||0;
+  const bal=base+st.in-st.out;
+  const balPrev=bal+st.pin-st.pout;
   const money=(v,cls)=>'<p class="total'+(v<0?' neg':'')+(cls?' '+cls:'')+'"><span class="cur">R$</span>'+(v<0?'−':'')+esc(fmtNum(Math.abs(v)))+'</p>';
     if(isFuture){
     h+='<div class="hero one"><div class="hero-prev"><p class="lbl">Saldo previsto</p>'+money(balPrev)+'</div></div>';
@@ -1023,6 +1043,8 @@ function renderCatEdit(t){
 function openSettings(){
   const s=settings();draft.out=clone(s.categories);draft.in=clone(s.incomeCategories);
   $("sBudget").value=s.budget>0?fmtNum(s.budget):"";
+  $("sOpenMonth").value=s.opening?s.opening.month:thisMonth();
+  $("sOpenVal").value=s.opening?fmtNum(s.opening.cents).replace(/^-?/,s.opening.cents<0?"-":""):"";
   $("sEmail").textContent=Store.user?"Conectado como "+Store.user.email:"";
   renderCatEdit("out");renderCatEdit("in");renderRecList();setDlg.showModal();
 }
@@ -1036,6 +1058,7 @@ function nextColor(list){const used=new Set(list.map(c=>c.color));return PALETTE
 document.querySelectorAll("[data-addcat]").forEach(b=>b.addEventListener("click",()=>{const t=b.dataset.addcat;
   draft[t].push({id:"c"+uid(),name:"",color:nextColor(draft[t])});renderCatEdit(t);
   const ins=$(t==="in"?"sCatsIn":"sCatsOut").querySelectorAll("input");ins[ins.length-1].focus();}));
+$("sOpenVal").addEventListener("blur",()=>{const c=parseCents($("sOpenVal").value);if(!isNaN(c))$("sOpenVal").value=(c<0?"-":"")+fmtNum(Math.abs(c));});
 $("sBudget").addEventListener("blur",()=>{const c=parseCents($("sBudget").value);if(c>0)$("sBudget").value=fmtNum(c);});
 $("sCancel").addEventListener("click",()=>setDlg.close());
 $("sLogout").addEventListener("click",async()=>{setDlg.close();await Store.sb.auth.signOut();});
@@ -1043,11 +1066,16 @@ $("setForm").addEventListener("submit",async e=>{
   e.preventDefault();
   const b=$("sBudget").value.trim(),budget=b?parseCents(b):0;
   if(b&&!(budget>0)){toast("Informe o orçamento em reais, por exemplo 3.000,00.");return;}
+  const ov=$("sOpenVal").value.trim(),om=$("sOpenMonth").value;let opening=null;
+  if(ov){const c=parseCents(ov);
+    if(isNaN(c)){toast("Informe o saldo inicial em reais, por exemplo 1.250,00 ou -80,00.");return;}
+    if(!/^\d{4}-\d{2}$/.test(om)){toast("Escolha o mês do saldo inicial.");return;}
+    opening={cents:c,month:om};}
   const clean=l=>l.map(c=>Object.assign({},c,{name:c.name.trim()})).filter(c=>c.name);
   const co=clean(draft.out),cin=clean(draft.in);
   if(!co.length||!cin.length){toast("Mantenha pelo menos uma categoria com nome em cada lista.");return;}
   setDlg.close();
-  try{await Store.mutate("settings",()=>({budget,categories:co,incomeCategories:cin}));toast("Ajustes salvos");}catch(ex){saveError(ex);}
+  try{await Store.mutate("settings",()=>({budget,opening,categories:co,incomeCategories:cin}));toast("Ajustes salvos");}catch(ex){saveError(ex);}
 });
 
 /* ---------- CSV ---------- */
@@ -1158,7 +1186,7 @@ $("sFile").addEventListener("change",async e=>{
   setDlg.close();toast("Importando "+total+" lançamentos…");
   let added=0,dup=0;
   try{
-    if(changed) await Store.mutate("settings",()=>({budget:s.budget,categories:cats.out,incomeCategories:cats.in}));
+    if(changed) await Store.mutate("settings",d=>Object.assign({},d||{},{budget:s.budget,opening:s.opening,categories:cats.out,incomeCategories:cats.in}));
     for(const ym of Object.keys(byMonth).sort()){
       let a=0,d=0;
       await mutateMonth(ym,doc=>{a=0;d=0;const have=new Set(doc.items.map(sig));
@@ -1186,7 +1214,7 @@ $("sBkFile").addEventListener("change",async e=>{
   try{
     if(b.settings){const s=settings();
       await Store.mutate("settings",d=>{const cur=d&&okList(d.categories)?d:s;
-        return {budget:Number(cur.budget)||Number(b.settings.budget)||0,categories:unionById(okList(cur.categories)?cur.categories:s.categories,b.settings.categories),incomeCategories:unionById(okList(cur.incomeCategories)?cur.incomeCategories:s.incomeCategories,b.settings.incomeCategories)};});}
+        return {budget:Number(cur.budget)||Number(b.settings.budget)||0,opening:cur.opening||b.settings.opening||null,categories:unionById(okList(cur.categories)?cur.categories:s.categories,b.settings.categories),incomeCategories:unionById(okList(cur.incomeCategories)?cur.incomeCategories:s.incomeCategories,b.settings.incomeCategories)};});}
     if(Array.isArray(b.recurring)&&b.recurring.length) await mutateRecurring(l=>unionById(l,b.recurring));
     for(const ym of Object.keys(b.months).filter(m=>/^\d{4}-\d{2}$/.test(m)).sort()){
       const src=normMonth(b.months[ym]);let a=0;
